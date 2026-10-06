@@ -1,0 +1,27 @@
+#!/bin/bash
+set -e -u
+
+# Set working directory to the root of the repo.
+cd "$(dirname $0)/.."
+
+# Read variables.
+. common.defs
+
+# Force default platform for Docker.
+export DOCKER_DEFAULT_PLATFORM="Linux/$TARGET_ARCH"
+
+# Update builder image.
+docker build --target builder -t "$DOCKER_BUILDER_IMAGE_ARCH" .
+
+# Create output directories if needed.
+mkdir -p build dist
+
+# Run pyinstaller in Docker.
+docker run -t --rm \
+    -v "$(pwd)/build:/work/build" \
+    -v "$(pwd)/dist:/work/dist" \
+    "$DOCKER_BUILDER_IMAGE_ARCH" \
+    pyinstaller -y --onefile --add-data "/work/src/migrations/*.*:src/migrations" --add-data "/work/src/migrations/versions/*.py:src/migrations/versions" $MAIN_SCRIPT
+
+echo "=> Build successfully generated in ./dist/"
+

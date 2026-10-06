@@ -1,0 +1,7 @@
+# Defaults for Kapri2API server
+# Sourced by Kapri2API.service
+# Installed at /etc/default/Kapri2API by the packager
+
+# Additional options that are passed to the server.
+SERVER_ARGS="--config /etc/Kapri2API.conf"
+

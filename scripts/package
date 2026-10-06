@@ -1,0 +1,29 @@
+#!/bin/bash
+set -e -u
+
+# Set working directory to the root of the repo.
+cd "$(dirname $0)/.."
+
+# Read variables.
+. common.defs
+
+# Force default platform for Docker.
+export DOCKER_DEFAULT_PLATFORM="Linux/$TARGET_ARCH"
+
+# Update builder image.
+scripts/build
+
+# Create output directory if needed.
+mkdir -p packages
+
+# Build deb.
+# It will write the package into "packages" directory.
+docker run -t --rm \
+    -v "$(pwd)/dist:/work/dist" \
+    -v "$(pwd)/packages:/work/packages" \
+    "$DOCKER_BUILDER_IMAGE_ARCH" \
+    fpm -s dir -t deb -p packages \
+        -n $PACKAGE_NAME \
+        -v $PACKAGE_VER \
+        $PACKAGE_OPTS \
+        $PACKAGE_INPUTS

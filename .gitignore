@@ -1,0 +1,14 @@
+.idea/
+__pycache__/
+app/__pycache__/
+venv/
+dist/
+build/
+packages/
+instance/
+imgrepo/
+license/
+Kapri2API.log
+Kapri2API.log.*
+config/Kapri2API_default.conf
+Kapri2API.spec

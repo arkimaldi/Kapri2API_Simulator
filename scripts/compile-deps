@@ -1,0 +1,21 @@
+#!/bin/bash
+set -e -u
+
+# Set working directory to the root of the repo.
+cd "$(dirname $0)/.."
+
+# Read variables.
+. common.defs
+
+# Silently build base docker image. It should has pip-tools installed.
+IMAGE_ID=$(docker build --target base --quiet -t "$DOCKER_BASE_IMAGE" .)
+
+echo "# Running pip-compile with Docker" 
+
+# Mount input files (the requirement list) and run pip-compile
+docker run --rm \
+    -v "$(pwd)/requirements.in:/requirements.in" \
+    -v "$(pwd)/requirements.txt:/requirements.txt" \
+    "$IMAGE_ID" \
+    pip-compile --output-file=- $* | tr -d '\r'
+

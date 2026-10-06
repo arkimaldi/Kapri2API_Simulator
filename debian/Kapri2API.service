@@ -1,0 +1,16 @@
+[Unit]
+Description=Kapri2API Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/Kapri2API
+RuntimeDirectory=Kapri2API
+Environment="TMP=/run"
+EnvironmentFile=-/etc/default/Kapri2API
+ExecStart=/opt/Kapri2API/Kapri2API $SERVER_ARGS
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

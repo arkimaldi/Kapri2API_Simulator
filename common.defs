@@ -1,0 +1,48 @@
+# Common definitions across the scripts.
+#
+# This is a POSIX shell fragment.
+#
+
+# Program's init script
+MAIN_SCRIPT="src/Kapri2API.py"
+
+# Config files
+ETC_DEFAULT="debian/Kapri2API.default"
+SYSTEMD_SERVICE="debian/Kapri2API.service"
+
+# Package name (in lowercase).
+PACKAGE_NAME="kapri2api-server"
+
+# Input files or directories for packaging.
+# One per line "source_path=absolute_destination_path"
+PACKAGE_INPUTS="
+dist/Kapri2API=/opt/Kapri2API/Kapri2API
+config/Kapri2API.conf=/etc/Kapri2API.conf
+"
+
+# Packaging options.
+# Help: https://fpm.readthedocs.io/en/latest/packages/deb.html#deb-specific-command-line-flags
+PACKAGE_OPTS="
+--deb-no-default-config-files
+--deb-default $ETC_DEFAULT
+--deb-systemd $SYSTEMD_SERVICE
+--deb-systemd-enable
+"
+
+## No need to edit the variables below this line ##
+
+# Read package version from git tag.
+PACKAGE_VER=$(git describe --tags --dirty --always)
+
+# Target arch. Use TARGET_ARCH env var to override.
+# For cross-compiling 'multiarch/qemu-user-static' must be intalled on host.
+# Default value: same arch as host
+HOST_ARCH="$(uname -m)"
+TARGET_ARCH="${TARGET_ARCH:=$HOST_ARCH}"
+
+# Host-only Docker images names.
+DOCKER_BASE_IMAGE="$PACKAGE_NAME-base-$HOST_ARCH"
+DOCKER_TEST_IMAGE="$PACKAGE_NAME-builder-$HOST_ARCH"
+
+# Target Docker image names.
+DOCKER_BUILDER_IMAGE_ARCH="$PACKAGE_NAME-builder-${TARGET_ARCH///}"

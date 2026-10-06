@@ -1,0 +1,15 @@
+#!/bin/bash
+set -e -u
+
+# Set working directory to the root of the repo.
+cd "$(dirname $0)/.."
+
+# Read variables.
+. common.defs
+
+# Update docker image.
+docker build --target builder -t "$DOCKER_TEST_IMAGE" .
+
+# Run pytest in Docker.
+docker run -t --rm "$DOCKER_TEST_IMAGE" pytest $*
+

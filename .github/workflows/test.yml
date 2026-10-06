@@ -1,0 +1,30 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - '**'
+    paths-ignore:
+      - '**/README*.md'
+      - 'docs/**'
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tests
+        run: scripts/test
+
+#      - name: Archive reports for failed build
+#        if: ${{ failure() }}
+#        uses: actions/upload-artifact@v4
+#        with:
+#          # Unique per run/attempt to avoid 409 conflicts and re-run clashes
+#          name: test-reports-${{ github.run_id }}-${{ github.run_attempt }}
+#          path: test-reports
+#          if-no-files-found: ignore     # or 'error' if you want a hard fail

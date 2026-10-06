@@ -10,6 +10,10 @@
 # sRemoteUrl is the URL the device is currently bound to; an empty string means
 # the device is not configured. It is up to the server to compare it against its
 # own URL to tell whether the device belongs to it or to another server.
+#
+# It also accepts a unicast 'kapri_link' datagram that binds the device to a
+# server by setting its remote URL. For simulation purposes the value is kept
+# in RAM only, so it is lost on restart; the real firmware must persist it.
 
 import socket
 import threading
@@ -24,6 +28,7 @@ class MgrDiscovery:
     DISCOVERY_PORT = 60100
     DISCOVERY_TOKEN = b'KAPRI_DISCOVERY'  # Token expected in the request
     RECV_BUFFER_SIZE = 1024  # Max bytes per incoming datagram
+    LINK_TYPE = 'kapri_link'  # Unicast datagram that binds the device
 
     # Simulació per a proves: valor que s'informarà com a remote_url.
     # '' (string buit) = dispositiu no configurat, lliure per vincular.
@@ -69,6 +74,33 @@ class MgrDiscovery:
         self.simulated_remote_url = remote_url or ''
         logging.info("Discovery: simulated remote_url set to '%s'", self.simulated_remote_url)
 
+    def _apply_link(self, payload: dict, remote_addr: Tuple[str, int]) -> None:
+        """
+        Aplica una ordre de vinculació rebuda per unicast.
+
+        Un dispositiu ja vinculat NO es pot re-vincular per UDP: si s'acceptés,
+        qualsevol equip de la xarxa podria redirigir el terminal cap a un altre
+        servidor sense autenticar-se. Per alliberar-lo cal un reset físic.
+
+        El token no arriba mai per aquesta via: l'escriu el servidor durant la
+        seqüència d'enrolament, que ja circula per HTTPS.
+        """
+        new_url = (payload.get('sRemoteUrl') or '').strip()
+        if not new_url:
+            logging.warning("Link request from %s without sRemoteUrl: ignored", remote_addr[0])
+            return
+
+        current = self.get_remote_url()
+        if current:
+            logging.warning(
+                "Link request from %s rejected: device already bound to '%s'",
+                remote_addr[0], current
+            )
+            return
+
+        self.set_remote_url(new_url)
+        logging.info("Device bound to '%s' by %s", new_url, remote_addr[0])
+
     def _build_response(self, remote_addr: Tuple[str, int]) -> bytes:
         """
         Build the response payload.
@@ -107,6 +139,10 @@ class MgrDiscovery:
                     continue
 
                 if not data.startswith(token):
+                    # Pot ser una ordre de vinculació, o bé la resposta d'un
+                    # altre dispositiu (les respostes van per broadcast) o la
+                    # nostra pròpia. Només s'atén 'kapri_link'.
+                    self._handle_non_discovery_datagram(data, addr)
                     continue
 
                 logging.debug("Received discovery request from %s:%d", addr[0], addr[1])
@@ -127,6 +163,20 @@ class MgrDiscovery:
             except Exception:
                 pass
             logging.info("Kapri UDP discovery server stopped")
+
+    def _handle_non_discovery_datagram(self, data: bytes, addr: Tuple[str, int]) -> None:
+        try:
+            payload = json.loads(data.decode('ascii', errors='replace'))
+        except Exception:
+            return  # no és JSON: s'ignora en silenci
+        if not isinstance(payload, dict):
+            return
+        if payload.get('type') != MgrDiscovery.LINK_TYPE:
+            return  # resposta de discovery d'un altre dispositiu, o la pròpia
+        try:
+            self._apply_link(payload, addr)
+        except Exception:
+            logging.exception("Error applying link request from %s", addr[0])
 
     def _start_udp_discovery_server(
         self,

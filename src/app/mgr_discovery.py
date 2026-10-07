@@ -15,7 +15,9 @@
 #
 # It also accepts a unicast 'kapri_link' datagram that binds the device to a
 # server: it writes the cloud parameters and applies them, so that after the
-# link the device actually starts calling.
+# link the device actually starts calling. Its fields carry their native
+# configuration names; only the discovery reply keeps the sRemoteUrl
+# convention.
 
 import socket
 import threading
@@ -40,16 +42,17 @@ class MgrDiscovery:
     # Row 2 holds the pending one, written but not applied yet.
     ACTIVE_CONFIG_ID = 1
 
-    # Parameters a link datagram is allowed to set, mapped to their
-    # configuration name. Nothing outside this map is ever written: the
-    # datagram travels over UDP without authentication, so it must not be able
-    # to overwrite settings made by the installer.
-    LINK_PARAMS = {
-        'sRemoteUrl': 'cloud_remote_server_url',
-        'cloud_interface': 'cloud_interface',
-        'cloud_allowed_events': 'cloud_allowed_events',
-        'cloud_keep_alive_timeout': 'cloud_keep_alive_timeout',
-    }
+    # Configuration parameters a link datagram is allowed to set. They carry
+    # their native configuration name, so the datagram maps one to one onto
+    # ins_cfg_write. Nothing outside this set is ever written: the datagram
+    # travels over UDP without authentication, so it must not be able to
+    # overwrite settings made by the installer.
+    LINK_PARAMS = (
+        'cloud_remote_server_url',
+        'cloud_interface',
+        'cloud_allowed_events',
+        'cloud_keep_alive_timeout',
+    )
 
     def __init__(self, app, mgr_knprxupdater, mgr_hardware_info, mgr_config_kapri):
         self.app = app
@@ -96,9 +99,9 @@ class MgrDiscovery:
         enrollment sequence, which already runs over HTTPS.
         """
         dict_params = {
-            cfg_name: payload[frame_name]
-            for frame_name, cfg_name in MgrDiscovery.LINK_PARAMS.items()
-            if payload.get(frame_name) is not None
+            name: payload[name]
+            for name in MgrDiscovery.LINK_PARAMS
+            if payload.get(name) is not None
         }
         if not dict_params.get('cloud_remote_server_url'):
             logging.warning("Link request from %s without a remote URL: ignored",

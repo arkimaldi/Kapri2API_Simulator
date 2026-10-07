@@ -7,19 +7,25 @@
 # Listens for a broadcast datagram containing a token (e.g. b"KAPRI_DISCOVERY")
 # and responds with a datagram containing sImageVersion, sEUI64 and sRemoteUrl.
 #
-# sRemoteUrl is the URL the device is currently bound to; an empty string means
-# the device is not configured. It is up to the server to compare it against its
-# own URL to tell whether the device belongs to it or to another server.
+# sRemoteUrl is read from the ACTIVE configuration (NanoConfiguration id 1),
+# not from the pending one: it reports what the device is really using. An
+# empty string means the device is not bound to any server, and it is up to
+# the server to compare the value against its own URL to tell whether the
+# device belongs to it or to another one.
 #
 # It also accepts a unicast 'kapri_link' datagram that binds the device to a
-# server by setting its remote URL. For simulation purposes the value is kept
-# in RAM only, so it is lost on restart; the real firmware must persist it.
+# server: it writes the cloud parameters and applies them, so that after the
+# link the device actually starts calling.
 
 import socket
 import threading
 import json
 import logging
-from typing import Optional, Tuple
+from typing import Tuple
+
+from app.db_models import NanoConfiguration
+from app.extensions import db
+from app.ktp_ret import KtpRet
 
 
 class MgrDiscovery:
@@ -30,24 +36,26 @@ class MgrDiscovery:
     RECV_BUFFER_SIZE = 1024  # Max bytes per incoming datagram
     LINK_TYPE = 'kapri_link'  # Unicast datagram that binds the device
 
-    # Simulació per a proves: valor que s'informarà com a remote_url.
-    # '' (string buit) = dispositiu no configurat, lliure per vincular.
-    # Posar-hi, p.ex., 'https://kora.exemple.com/api' per simular un
-    # dispositiu ja vinculat.
-    SIMULATED_REMOTE_URL = ''
+    # Id of the row holding the configuration currently applied to the system.
+    # Row 2 holds the pending one, written but not applied yet.
+    ACTIVE_CONFIG_ID = 1
 
-    def __init__(self, app, mgr_knprxupdater, mgr_hardware_info,
-                 simulated_remote_url: Optional[str] = None):
+    # Parameters a link datagram is allowed to set, mapped to their
+    # configuration name. Nothing outside this map is ever written: the
+    # datagram travels over UDP without authentication, so it must not be able
+    # to overwrite settings made by the installer.
+    LINK_PARAMS = {
+        'sRemoteUrl': 'cloud_remote_server_url',
+        'cloud_interface': 'cloud_interface',
+        'cloud_allowed_events': 'cloud_allowed_events',
+        'cloud_keep_alive_timeout': 'cloud_keep_alive_timeout',
+    }
+
+    def __init__(self, app, mgr_knprxupdater, mgr_hardware_info, mgr_config_kapri):
         self.app = app
         self.mgr_knprxupdater = mgr_knprxupdater
         self.mgr_hardware_info = mgr_hardware_info
-        # Si és None s'usa la constant de classe. Permet injectar el valor
-        # des del test sense tocar el codi.
-        self.simulated_remote_url = (
-            MgrDiscovery.SIMULATED_REMOTE_URL
-            if simulated_remote_url is None
-            else simulated_remote_url
-        )
+        self.mgr_config_kapri = mgr_config_kapri
 
     def start(self):
         self._start_udp_discovery_server(
@@ -58,36 +66,43 @@ class MgrDiscovery:
 
     def get_remote_url(self) -> str:
         """
-        Retorna la remote_url configurada al dispositiu.
+        Returns the cloud_remote_server_url of the ACTIVE configuration.
 
-        De moment retorna el valor simulat. Quan existeixi la configuració
-        real, aquest és l'únic punt a canviar: llegir-la d'allà i deixar la
-        simulació només per a l'entorn de proves.
+        An empty string means the device is not bound to any server.
         """
-        return self.simulated_remote_url or ''
-
-    def set_remote_url(self, remote_url: str) -> None:
-        """
-        Permet canviar el valor simulat en calent, per encadenar proves
-        (lliure -> vinculat -> lliure) sense reiniciar el procés.
-        """
-        self.simulated_remote_url = remote_url or ''
-        logging.info("Discovery: simulated remote_url set to '%s'", self.simulated_remote_url)
+        try:
+            with self.app.app_context():
+                try:
+                    qry = db.session.query(NanoConfiguration).filter(
+                        NanoConfiguration.id == MgrDiscovery.ACTIVE_CONFIG_ID
+                    ).one()
+                    return qry.cloud_remote_server_url or ''
+                finally:
+                    db.session.close()
+        except Exception:
+            logging.exception("Error reading the active cloud_remote_server_url")
+            return ''
 
     def _apply_link(self, payload: dict, remote_addr: Tuple[str, int]) -> None:
         """
-        Aplica una ordre de vinculació rebuda per unicast.
+        Applies a link request received by unicast: writes the cloud
+        parameters and applies them, so the device starts calling the server.
 
-        Un dispositiu ja vinculat NO es pot re-vincular per UDP: si s'acceptés,
-        qualsevol equip de la xarxa podria redirigir el terminal cap a un altre
-        servidor sense autenticar-se. Per alliberar-lo cal un reset físic.
+        A device already bound is NOT re-bound over UDP: if it were, any host
+        on the network could redirect the terminal to another server without
+        authenticating. Freeing it requires a factory reset.
 
-        El token no arriba mai per aquesta via: l'escriu el servidor durant la
-        seqüència d'enrolament, que ja circula per HTTPS.
+        The token never arrives this way: the server writes it during the
+        enrollment sequence, which already runs over HTTPS.
         """
-        new_url = (payload.get('sRemoteUrl') or '').strip()
-        if not new_url:
-            logging.warning("Link request from %s without sRemoteUrl: ignored", remote_addr[0])
+        dict_params = {
+            cfg_name: payload[frame_name]
+            for frame_name, cfg_name in MgrDiscovery.LINK_PARAMS.items()
+            if payload.get(frame_name) is not None
+        }
+        if not dict_params.get('cloud_remote_server_url'):
+            logging.warning("Link request from %s without a remote URL: ignored",
+                            remote_addr[0])
             return
 
         current = self.get_remote_url()
@@ -98,8 +113,22 @@ class MgrDiscovery:
             )
             return
 
-        self.set_remote_url(new_url)
-        logging.info("Device bound to '%s' by %s", new_url, remote_addr[0])
+        with self.app.app_context():
+            ucRet, param_failed = self.mgr_config_kapri.write_future(dict_params)
+            if ucRet != KtpRet.RET_OK:
+                logging.error("Link request from %s failed writing the configuration "
+                              "(ucRet=%s, parameter=%s)",
+                              remote_addr[0], ucRet, param_failed)
+                return
+
+            ucRet = self.mgr_config_kapri.apply()
+            if ucRet != KtpRet.RET_OK:
+                logging.error("Link request from %s failed applying the configuration "
+                              "(ucRet=%s)", remote_addr[0], ucRet)
+                return
+
+        logging.info("Device bound to '%s' by %s",
+                     dict_params['cloud_remote_server_url'], remote_addr[0])
 
     def _build_response(self, remote_addr: Tuple[str, int]) -> bytes:
         """
@@ -139,9 +168,9 @@ class MgrDiscovery:
                     continue
 
                 if not data.startswith(token):
-                    # Pot ser una ordre de vinculació, o bé la resposta d'un
-                    # altre dispositiu (les respostes van per broadcast) o la
-                    # nostra pròpia. Només s'atén 'kapri_link'.
+                    # It may be a link request, or the discovery reply of
+                    # another device (replies are broadcast) or our own. Only
+                    # 'kapri_link' is acted upon.
                     self._handle_non_discovery_datagram(data, addr)
                     continue
 
@@ -168,11 +197,11 @@ class MgrDiscovery:
         try:
             payload = json.loads(data.decode('ascii', errors='replace'))
         except Exception:
-            return  # no és JSON: s'ignora en silenci
+            return  # not JSON: silently ignored
         if not isinstance(payload, dict):
             return
         if payload.get('type') != MgrDiscovery.LINK_TYPE:
-            return  # resposta de discovery d'un altre dispositiu, o la pròpia
+            return  # another device's discovery reply, or our own
         try:
             self._apply_link(payload, addr)
         except Exception:

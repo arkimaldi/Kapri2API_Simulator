@@ -67,7 +67,6 @@ class KapriApp:
         self.mgr_knprxupdater = MgrKnprxupdater(self.app)
         self.mgr_device_info = MgrDeviceInfo(self.app, self.mgr_hardware_info, self.mgr_kapriassist, self.mgr_knprxupdater)
         self.mgr_linuxsys = MgrLinuxsys(self.app, self.mgr_hardware_info, self.mgr_kapriassist)
-        self.mgr_discovery = MgrDiscovery(self.app, self.mgr_knprxupdater, self.mgr_hardware_info)
         self.mgr_guispy = MgrGuispy(self.app, self.mgr_device_info, self.mgr_linuxsys, self.sio_emit)
         self.mgr_ktpterminal = MgrKtpterminal(self.app, self.mgr_hardware_info)
         self.mgr_jsoterminal = MgrJsoterminal(self.app)
@@ -95,6 +94,12 @@ class KapriApp:
         self.mgr_config_kapri = MgrConfigKapri(
             self.app, self.mgr_hardware_info, self.mgr_kapriassist, self.mgr_config_nano, self.mgr_config_carrier,
             self.mgr_config_lexamain, self.mgr_config_lexaaux, self.mgr_web_users
+        )
+        # El discovery es construeix aquí, i no més amunt, perquè necessita
+        # mgr_config_kapri: llegeix la URL activa per reportar-la i aplica la
+        # configuració quan rep una instrucció de vinculació.
+        self.mgr_discovery = MgrDiscovery(
+            self.app, self.mgr_knprxupdater, self.mgr_hardware_info, self.mgr_config_kapri
         )
         self.mgr_carrier_detector = MgrCarrierDetector(
             self.app, self.mgr_hardware_info, self.mgr_kxphost, self.mgr_config_carrier,
